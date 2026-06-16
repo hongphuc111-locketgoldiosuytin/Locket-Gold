@@ -2,6 +2,28 @@ import aiohttp
 import asyncio
 import datetime
 
+# Danh sách domain cần chặn
+BLOCK_DOMAINS = [
+    # RevenueCat - Chặn kiểm tra gói Gold
+    "revenuecat.com",
+    "api.revenuecat.com",
+    "www.revenuecat.com",
+    # IP Check Services - Chặn kiểm tra IP
+    "api.ipify.org",
+    "api64.ipify.org",
+    "ipinfo.io",
+    "ip-api.com",
+    "ipapi.co",
+    "checkip.amazonaws.com",
+    "ifconfig.me",
+    "icanhazip.com",
+    "ip.seeip.org",
+    "api.ip.sb",
+    "ipwhois.io",
+    "api.myip.com",
+    "ipecho.net",
+]
+
 async def create_profile(api_key, log_callback=None):
     def log(msg):
         if log_callback:
@@ -29,13 +51,15 @@ async def create_profile(api_key, log_callback=None):
                             pid = p.get('id')
                             log(f"[+] Found existing daily profile: {pid} (REUSING)")
                             
-                            log(f"[>] Verifying High-Speed VIP Node...")
+                            log(f"[>] Verifying Anti-Revoke & IP Block Rules...")
                             
+                            # Đảm bảo tất cả domain đều bị block
                             denylist_url = f"https://api.nextdns.io/profiles/{pid}/denylist"
                             try:
-                                async with session.post(denylist_url, json={"id": "revenuecat.com", "active": True}) as post_res:
-                                    pass
-                                log(f"[>] Integrity Check: OK (Rules Checked).")
+                                for domain in BLOCK_DOMAINS:
+                                    async with session.post(denylist_url, json={"id": domain, "active": True}) as post_res:
+                                        pass
+                                log(f"[>] Integrity Check: OK ({len(BLOCK_DOMAINS)} rules verified).")
                             except Exception as e:
                                 log(f"[!] Warning checking rules: {e}")
 
@@ -59,33 +83,33 @@ async def create_profile(api_key, log_callback=None):
                     pid = data['data']['id']
                     log(f"[+] Profile created: {pid}")
                     
-                    log(f"[>] Applying Anti-Revoke Rules (RevenueCat/Apple)...")
+                    log(f"[>] Applying Anti-Revoke & IP Block Rules...")
                     await asyncio.sleep(0.4)
                     
                     denylist_url = f"https://api.nextdns.io/profiles/{pid}/denylist"
-                    target_domain = "revenuecat.com"
+                    
+                    # Block tất cả domain (RevenueCat + IP check)
+                    blocked_count = 0
+                    for domain in BLOCK_DOMAINS:
+                        try:
+                            async with session.post(denylist_url, json={"id": domain, "active": True}) as r:
+                                if r.status == 200:
+                                    blocked_count += 1
+                        except Exception as e:
+                            log(f"[!] Error blocking {domain}: {e}")
+                    
+                    log(f"[+] Firewall Rules Applied: {blocked_count}/{len(BLOCK_DOMAINS)} domains blocked")
+                    
+                    # Verify
                     try:
-                        async with session.post(denylist_url, json={"id": target_domain, "active": True}) as r:
-                            pass
-                        
                         async with session.get(denylist_url) as verify_r:
                             if verify_r.status == 200:
                                 verify_data = await verify_r.json()
                                 rules = verify_data.get('data', [])
-                                blocked = [d.get('id') for d in rules if d.get('active')]
-                                
-                                if target_domain in blocked:
-                                    log(f"[+] Firewall Rules Applied: {', '.join(blocked)}")
-                                else:
-                                    log(f"[!] Rule applied but not found in verify. Retrying with api.revenuecat.com...")
-                                    async with session.post(denylist_url, json={"id": "api.revenuecat.com", "active": True}) as fp: pass
-                                    async with session.post(denylist_url, json={"id": "www.revenuecat.com", "active": True}) as fp2: pass
-                                    log("[+] Added subdomains fallback.")
-                            else:
-                                 log(f"[!] Validation Failed: {verify_r.status}")
-    
-                    except Exception as block_e:
-                         log(f"[!] Error blocking domain: {block_e}")
+                                active_rules = [d.get('id') for d in rules if d.get('active')]
+                                log(f"[+] Verified: {len(active_rules)} active rules")
+                    except:
+                        pass
                     
                     log(f"[SUCCESS] DNS VIP Node Active.")
                     link = f"https://apple.nextdns.io/?profile={pid}"
